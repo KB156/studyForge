@@ -3,6 +3,11 @@
 import { useState } from "react";
 import { File, Upload, X } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { db } from "@/lib/firebase";
+import { collection, addDoc } from "firebase/firestore"; 
+import { extractTextFromPDF } from "@/lib/pdfUtils";
+import { getEmbeddingFromGroq } from "@/lib/embedding";
+import { getEmbedding } from '@/lib/embed';
 
 interface DashboardClientProps {
   userId: string;
@@ -27,7 +32,8 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
       font-weight: 500;
       z-index: 1000;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-      background-color: ${type === 'success' ? '#10b981' : '#ef4444'};
+      background: ${type === 'success' ? 'linear-gradient(to right, #10b981, #059669)' : 'linear-gradient(to right, #ef4444, #dc2626)'};
+      backdrop-filter: blur(10px);
     `;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
@@ -50,79 +56,47 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
       showToast("Please select a file first.", "error");
       return;
     }
-
+  
     setIsUploading(true);
-
-    const formData = new FormData();
-    formData.append("file", selectedFile);
-    formData.append("upload_preset", "studyForge");
-    formData.append("cloud_name", "dpv95vl8a");
-    formData.append("resource_type", "raw");
-
+  
     try {
-      // Upload to Cloudinary
-      const cloudinaryResponse = await fetch(
-        "https://api.cloudinary.com/v1_1/dpv95vl8a/raw/upload",
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
-      if (!cloudinaryResponse.ok) {
-        throw new Error("Cloudinary upload failed");
-      }
-
-      const cloudinaryData = await cloudinaryResponse.json();
-      const secureUrl = cloudinaryData.secure_url;
-      const filename = cloudinaryData.original_filename || selectedFile.name;
-
-      // Save metadata to Firebase
-      const metadataResponse = await fetch("/api/saveMetadata", {
+      // Step 1: Upload to Cloudinary
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append("upload_preset", "studyForge");
+      formData.append("cloud_name", "dpv95vl8a");
+  
+      const uploadRes = await fetch("https://api.cloudinary.com/v1_1/dpv95vl8a/raw/upload", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: secureUrl,
-          fileName: filename,
-          userId,
-        }),
+        body: formData,
       });
-
-      if (!metadataResponse.ok) {
-        throw new Error("Failed to save metadata");
-      }
-
-      const metadataData = await metadataResponse.json();
-      
-      if (!metadataData.success || !metadataData.documentId) {
-        throw new Error("Invalid metadata response");
-      }
-      await fetch("/api/extract", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          pdfId: metadataData.documentId,
-        }),
+      const cloudinaryData = await uploadRes.json();
+      const url = cloudinaryData.secure_url;
+      const fileName = cloudinaryData.original_filename;
+  
+      // Step 2: Extract text
+      const text = await extractTextFromPDF(selectedFile);
+      console.log(text);
+  
+      // Step 3: Get embedding from Groq
+      // Step 3: Get embedding using USE (512-d)
+      const embedding = await getEmbedding(text);
+  
+      // Step 4: Save everything to Firestore
+      const docRef = await addDoc(collection(db, "uploads"), {
+        url,
+        fileName,
+        userId,
+        text: text.slice(0, 10000),
+        embedding,
+        createdAt: new Date().toISOString(),
       });
-
-      showToast("Upload successful!", "success");
-      setSelectedFile(null);
-      setPreviewUrl(null);
       
-      // Reset file input
-      const fileInput = document.getElementById('file-input') as HTMLInputElement;
-      if (fileInput) fileInput.value = '';
-
-      // Navigate using the document ID instead of filename
-      router.push(`/chat/${metadataData.documentId}`);
-
-    } catch (error) {
-      showToast("Upload failed! Please try again.", "error");
-      console.error("Upload error:", error);
+      showToast("Upload and embedding successful!", "success");
+      router.push(`/chat/${docRef.id}`);  
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to upload or process the PDF.", "error");
     } finally {
       setIsUploading(false);
     }
@@ -136,21 +110,39 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
   };
 
   return (
-    <div className="justify-center flex w-full min-h-screen bg-slate-900 text-white p-6">
-      <div className="max-w-4xl h-[30vh] justify-center w-full mx-auto">
+    <div 
+      className="justify-center flex w-full min-h-screen text-white p-6 relative overflow-hidden"
+      style={{ 
+        background: 'linear-gradient(to bottom right, #0f172a, #1e293b, #312e81)' 
+      }}
+    >
+      {/* Background blur effects */}
+      <div className="absolute inset-0 z-0 pointer-events-none">
+        <div className="absolute top-[-100px] left-[10%] w-[300px] h-[300px] bg-indigo-500/10 blur-[100px] rounded-full"></div>
+        <div className="absolute bottom-[-120px] right-[15%] w-[250px] h-[250px] bg-purple-400/10 blur-[80px] rounded-full"></div>
+      </div>
+
+      <div className="max-w-4xl h-[30vh] justify-center w-full mx-auto relative z-10">
         {/* Header */}
         <div className="mb-8 justify-center flex-col">
           <h1 className="text-4xl h-[20vh] font-bold text-white mb-2 flex items-center gap-3">
             📄 Upload Your PDF
           </h1>
-          <p className="text-slate-400 text-lg">Select and upload your PDF documents for processing</p>
+          <p className="text-slate-300 text-lg">Select and upload your PDF documents for processing</p>
         </div>
 
         {/* Upload Section */}
-        <div className="bg-slate-800 rounded-xl border border-slate-700 p-8 mb-6">
+        <div 
+          className="rounded-xl p-8 mb-6"
+          style={{
+            background: 'rgba(30, 41, 59, 0.4)',
+            backdropFilter: 'blur(10px)',
+            border: '1px solid rgba(71, 85, 105, 0.5)'
+          }}
+        >
           {/* File Input Area */}
           <div className="mb-6">
-            <label className="block text-sm font-semibold text-slate-300 mb-3">
+            <label className="block text-sm font-semibold text-slate-200 mb-3">
               Choose PDF File
             </label>
             
@@ -165,14 +157,27 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
               
               <label
                 htmlFor="file-input"
-                className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-600 rounded-lg cursor-pointer bg-slate-700/50 hover:bg-slate-700 hover:border-slate-500 transition-all duration-200"
+                className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer transition-all duration-200"
+                style={{
+                  borderColor: 'rgba(99, 102, 241, 0.5)',
+                  background: 'rgba(15, 23, 42, 0.6)',
+                  backdropFilter: 'blur(10px)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.8)';
+                  e.currentTarget.style.background = 'rgba(30, 41, 59, 0.8)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.5)';
+                  e.currentTarget.style.background = 'rgba(15, 23, 42, 0.6)';
+                }}
               >
                 <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                  <Upload className="w-8 h-8 mb-3 text-slate-400" />
-                  <p className="mb-2 text-sm text-slate-300">
+                  <Upload className="w-8 h-8 mb-3 text-slate-300" />
+                  <p className="mb-2 text-sm text-slate-200">
                     <span className="font-semibold">Click to upload</span> or drag and drop
                   </p>
-                  <p className="text-xs text-slate-500">PDF files only</p>
+                  <p className="text-xs text-slate-400">PDF files only</p>
                 </div>
               </label>
             </div>
@@ -180,13 +185,20 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
 
           {/* Selected File Info */}
           {selectedFile && (
-            <div className="mb-6 p-4 bg-slate-700 border border-slate-600 rounded-lg">
+            <div 
+              className="mb-6 p-4 rounded-lg"
+              style={{
+                background: 'rgba(15, 23, 42, 0.6)',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(71, 85, 105, 0.5)'
+              }}
+            >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <File className="w-5 h-5 text-blue-400" />
                   <div>
                     <p className="font-medium text-white">{selectedFile.name}</p>
-                    <p className="text-sm text-slate-400">
+                    <p className="text-sm text-slate-300">
                       {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
                     </p>
                   </div>
@@ -205,7 +217,21 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
           <button
             onClick={handleUpload}
             disabled={!selectedFile || isUploading}
-            className="w-full h-[10vh] bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-lg transition-all duration-200 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
+            className="w-full h-[10vh] text-white font-semibold py-4 px-6 rounded-lg transition-all duration-200 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl disabled:cursor-not-allowed"
+            style={{
+              background: (!selectedFile || isUploading) 
+                ? 'rgba(71, 85, 105, 0.5)' 
+                : 'linear-gradient(to right, #6366f1, #8b5cf6)',
+              backdropFilter: 'blur(10px)'
+            }}
+            onMouseEnter={(e) => {
+              if (!(!selectedFile || isUploading)) {
+                e.currentTarget.style.transform = 'scale(1.02)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+            }}
           >
             {isUploading ? (
               <>
@@ -215,7 +241,14 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
             ) : (
               <>
                 <Upload className="w-5 h-5" />
-                <span className="bg-indigo-400 px-4 py-1 rounded-md">
+                <span 
+                  className="px-4 py-1 rounded-md"
+                  style={{
+                    background: 'rgba(168, 85, 247, 0.3)',
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(168, 85, 247, 0.5)'
+                  }}
+                >
                   Upload PDF
                 </span>
               </>
@@ -226,8 +259,22 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
 
         {/* PDF Preview */}
         {previewUrl && (
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-            <div className="bg-slate-700 px-6 py-4 border-b border-slate-600">
+          <div 
+            className="rounded-xl overflow-hidden"
+            style={{
+              background: 'rgba(30, 41, 59, 0.4)',
+              backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(71, 85, 105, 0.5)'
+            }}
+          >
+            <div 
+              className="px-6 py-4"
+              style={{
+                background: 'rgba(15, 23, 42, 0.6)',
+                backdropFilter: 'blur(10px)',
+                borderBottom: '1px solid rgba(71, 85, 105, 0.5)'
+              }}
+            >
               <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                 <File className="w-5 h-5" />
                 PDF Preview
@@ -237,12 +284,22 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
               <iframe
                 src={previewUrl}
                 title="PDF Preview"
-                className="w-full h-96 border border-slate-600 rounded-lg bg-white"
+                className="w-full h-96 rounded-lg bg-white"
+                style={{
+                  border: '1px solid rgba(71, 85, 105, 0.5)'
+                }}
               />
             </div>
           </div>
         )}
       </div>
+
+      <style jsx>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }
