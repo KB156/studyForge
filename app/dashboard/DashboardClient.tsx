@@ -6,8 +6,7 @@ import { useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
 import { collection, addDoc } from "firebase/firestore"; 
 import { extractTextFromPDF } from "@/lib/pdfUtils";
-import { getEmbeddingFromGroq } from "@/lib/embedding";
-import { getEmbedding } from '@/lib/embed';
+
 
 interface DashboardClientProps {
   userId: string;
@@ -80,7 +79,7 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
   
       // Step 3: Get embedding from Groq
       // Step 3: Get embedding using USE (512-d)
-      const embedding = await getEmbedding(text);
+      
   
       // Step 4: Save everything to Firestore
       const docRef = await addDoc(collection(db, "uploads"), {
@@ -88,11 +87,11 @@ export default function DashboardClient({ userId = "demo-user" }: DashboardClien
         fileName,
         userId,
         text: text.slice(0, 10000),
-        embedding,
+        
         createdAt: new Date().toISOString(),
       });
       
-      showToast("Upload and embedding successful!", "success");
+      showToast("Upload successful!", "success");
       router.push(`/chat/${docRef.id}`);  
     } catch (err) {
       console.error(err);
