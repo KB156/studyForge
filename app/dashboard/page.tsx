@@ -7,5 +7,5 @@ export default async function DashboardPage() {
   const session = await auth(); // ✅ wait for the Promise to resolve
   const userId = session.userId;
 
-  return <DashboardClient userId={userId} />;
+  return <DashboardClient userId={userId!} />;
 }
