@@ -1,39 +1,27 @@
-// ✅ CORRECT: DO NOT import NextRequest here!
-import { NextResponse } from "next/server";
-import { getFirestore } from "firebase-admin/firestore";
-import { initializeApp, getApps, cert } from "firebase-admin/app";
+import { db } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { NextRequest, NextResponse } from "next/server";
 
-// ✅ Initialize Firebase only once
-if (!getApps().length) {
-  initializeApp({
-    credential: cert({
-      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      clientEmail: process.env.NEXT_PUBLIC_FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.NEXT_PUBLIC_FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    }),
-  });
-}
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const pdfId = url.pathname.split("/").pop(); // or extract from regex if needed
 
-const db = getFirestore();
-
-// ✅ CORRECT signature for App Router dynamic API routes:
-export async function GET(
-  request: Request,                     // ✅ standard Web Request
-  { params }: { params: { pdfId: string } }  // ✅ destructure params
-) {
-  const { pdfId } = params;
+  if (!pdfId) {
+    return NextResponse.json({ error: "Missing PDF ID" }, { status: 400 });
+  }
 
   try {
-    const doc = await db.collection("uploads").doc(pdfId).get();
+    const docRef = doc(db, "uploads", pdfId);
+    const docSnap = await getDoc(docRef);
 
-    if (!doc.exists) {
+    if (!docSnap.exists()) {
       return NextResponse.json({ error: "PDF not found" }, { status: 404 });
     }
 
-    const data = doc.data();
-    return NextResponse.json({ url: data?.url || null });  // ✅ matches client expectation
-  } catch (error) {
-    console.error("Error fetching PDF:", error);
+    const data = docSnap.data();
+    return NextResponse.json({ url: data?.url || null });
+  } catch (err) {
+    console.error("Error fetching PDF:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
